@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "battery-diagnostic-robustness-demo"
+version = "0.1.0"
+description = "A signal-to-state diagnostic audit pipeline for battery diagnostic robustness."
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "numpy",
+    "pandas",
+    "scipy",
+]
+
+[project.optional-dependencies]
+build = [
+    "pybamm>=24.1",
+]
+dev = [
+    "pytest",
+    "ruff",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
