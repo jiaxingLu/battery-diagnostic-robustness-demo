@@ -43,7 +43,11 @@ def test_pipeline_expected_key_verdicts():
     assert by_case.loc["initial_soc_mismatch_p05", "final_verdict"] == "PASS_DETECTED"
     assert (
         by_case.loc["voltage_bias_p10mV", "final_verdict"]
-        == "FAIL_AMBIGUOUS_SIGNATURE"
+        == "FAIL_MISSED_FAULT"
+    )
+    assert (
+        by_case.loc["module_capacity_scatter", "final_verdict"]
+        == "FAIL_MISSED_FAULT"
     )
     assert by_case.loc["combined_fault", "final_verdict"] == "PASS_DETECTED"
 

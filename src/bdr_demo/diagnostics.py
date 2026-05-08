@@ -45,6 +45,44 @@ CONTACT_R_FAIL_RATIO = 1.30
 MODULE_IMBALANCE_WARNING_MV = 30.0
 MODULE_IMBALANCE_FAIL_MV = 50.0
 
+EXPECTED_FLAG_RULES: dict[str, set[str]] = {
+    "none": set(),
+    "capacity_fade": {
+        "capacity_verdict",
+        "coulomb_drift_verdict",
+        "ocv_reset_verdict",
+    },
+    "contact_resistance_growth": {
+        "contact_R_verdict",
+        "ocv_reset_verdict",
+    },
+    "initial_soc_inventory_offset": {
+        "coulomb_drift_verdict",
+        "ocv_reset_verdict",
+    },
+    "voltage_sensor_bias": {
+        "voltage_residual_verdict",
+        "ocv_reset_verdict",
+    },
+    "cell_imbalance": {
+        "module_imbalance_verdict",
+        "coulomb_drift_verdict",
+    },
+    "capacity_inconsistency": {
+        "module_imbalance_verdict",
+        "capacity_verdict",
+        "coulomb_drift_verdict",
+    },
+    "combined": {
+        "coulomb_drift_verdict",
+        "ocv_reset_verdict",
+        "voltage_residual_verdict",
+        "capacity_verdict",
+        "contact_R_verdict",
+        "module_imbalance_verdict",
+    },
+}
+
 
 def rule_verdict_from_abs_error(
     value: float,
@@ -255,34 +293,64 @@ def compute_module_delta_voltage_max_mV(
 def combine_final_verdict(
     *,
     fault_label: str,
-    rule_verdicts: Sequence[RuleVerdict],
-    metrics_nonzero_but_below_threshold: bool,
+    rule_verdict_by_name: dict[str, RuleVerdict],
 ) -> tuple[bool, bool, str]:
-    """Combine rule verdicts into final diagnostic robustness verdict.
+    """Combine rule verdicts into a final diagnostic robustness verdict.
 
-    Returns:
-        ``(false_positive, false_negative, final_verdict)``.
+    Semantics:
+        - healthy + no rule flags -> PASS_HEALTHY
+        - healthy + any rule flags -> FAIL_FALSE_ALARM
+        - faulty + no rule flags -> FAIL_MISSED_FAULT
+        - faulty + expected FAIL -> PASS_DETECTED
+        - faulty + expected WARNING only -> WARNING_BOUNDARY
+        - faulty + flags exist but none are expected -> FAIL_AMBIGUOUS_SIGNATURE
+
+    ``FAIL_AMBIGUOUS_SIGNATURE`` is therefore reserved for cases where the
+    diagnostic reacts, but the active rule evidence is not consistent with the
+    injected fault label. A below-threshold hidden deviation is a missed fault,
+    not an ambiguous detected fault.
     """
 
-    has_warning = any(verdict == "WARNING" for verdict in rule_verdicts)
-    has_fail = any(verdict == "FAIL" for verdict in rule_verdicts)
-    has_any_flag = has_warning or has_fail
+    if fault_label not in EXPECTED_FLAG_RULES:
+        raise ValueError(f"Unknown fault_label for final verdict mapping: {fault_label}")
+
+    flagged_rules = {
+        name
+        for name, verdict in rule_verdict_by_name.items()
+        if verdict in {"WARNING", "FAIL"}
+    }
+
+    failing_rules = {
+        name
+        for name, verdict in rule_verdict_by_name.items()
+        if verdict == "FAIL"
+    }
+
+    warning_rules = {
+        name
+        for name, verdict in rule_verdict_by_name.items()
+        if verdict == "WARNING"
+    }
 
     if fault_label == "none":
-        if has_any_flag:
+        if flagged_rules:
             return True, False, "FAIL_FALSE_ALARM"
         return False, False, "PASS_HEALTHY"
 
-    if has_fail:
+    if not flagged_rules:
+        return False, True, "FAIL_MISSED_FAULT"
+
+    expected_rules = EXPECTED_FLAG_RULES[fault_label]
+    expected_failing_rules = failing_rules & expected_rules
+    expected_warning_rules = warning_rules & expected_rules
+
+    if expected_failing_rules:
         return False, False, "PASS_DETECTED"
 
-    if has_warning:
+    if expected_warning_rules:
         return False, False, "WARNING_BOUNDARY"
 
-    if metrics_nonzero_but_below_threshold:
-        return False, True, "FAIL_AMBIGUOUS_SIGNATURE"
-
-    return False, True, "FAIL_MISSED_FAULT"
+    return False, False, "FAIL_AMBIGUOUS_SIGNATURE"
 
 
 def compute_diagnostic_report(
@@ -348,30 +416,18 @@ def compute_diagnostic_report(
         fail_threshold=MODULE_IMBALANCE_FAIL_MV,
     )
 
-    rule_verdicts: tuple[RuleVerdict, ...] = (
-        coulomb_drift_verdict,
-        ocv_reset_verdict,
-        voltage_residual_verdict,
-        capacity_verdict,
-        contact_R_verdict,
-        module_imbalance_verdict,
-    )
-
-    # Used to distinguish a complete miss from an intentionally ambiguous
-    # below-threshold signature, e.g. +10 mV voltage sensor bias under a
-    # 30 mV warning threshold.
-    metrics_nonzero_but_below_threshold = bool(
-        voltage_residual_max_mV > 0.0
-        or abs(case.initial_soc_mismatch) > 0.0
-        or abs(capacity_consistency_error) > 0.0
-        or abs(contact_R_inferred_ratio - 1.0) > 0.0
-        or module_delta_voltage_max_mV > 0.0
-    )
+    rule_verdict_by_name: dict[str, RuleVerdict] = {
+        "coulomb_drift_verdict": coulomb_drift_verdict,
+        "ocv_reset_verdict": ocv_reset_verdict,
+        "voltage_residual_verdict": voltage_residual_verdict,
+        "capacity_verdict": capacity_verdict,
+        "contact_R_verdict": contact_R_verdict,
+        "module_imbalance_verdict": module_imbalance_verdict,
+    }
 
     false_positive, false_negative, final_verdict = combine_final_verdict(
         fault_label=case.fault_label,
-        rule_verdicts=rule_verdicts,
-        metrics_nonzero_but_below_threshold=metrics_nonzero_but_below_threshold,
+        rule_verdict_by_name=rule_verdict_by_name,
     )
 
     return DiagnosticReportRow(
@@ -405,6 +461,7 @@ __all__ = [
     "CONTACT_R_FAIL_RATIO",
     "MODULE_IMBALANCE_WARNING_MV",
     "MODULE_IMBALANCE_FAIL_MV",
+    "EXPECTED_FLAG_RULES",
     "rule_verdict_from_abs_error",
     "rule_verdict_from_upper_bound",
     "inverse_ocv_to_soc",

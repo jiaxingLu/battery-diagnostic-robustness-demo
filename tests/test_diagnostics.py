@@ -10,6 +10,7 @@ from bdr_demo.diagnostics import (
     compute_diagnostic_report,
     compute_module_delta_voltage_max_mV,
     compute_voltage_residual_max_mV,
+    combine_final_verdict,
     rule_verdict_from_abs_error,
     rule_verdict_from_upper_bound,
 )
@@ -97,14 +98,14 @@ def test_initial_soc_inventory_offset_is_detected_by_coulomb_drift():
     assert report.final_verdict == "PASS_DETECTED"
 
 
-def test_voltage_bias_10mV_is_below_warning_and_marked_ambiguous():
+def test_voltage_bias_10mV_is_below_warning_and_marked_missed():
     case, sensed = _sensed_single_cell("voltage_bias_p10mV")
     report = compute_diagnostic_report(case, sensed)
 
     assert np.isclose(compute_voltage_residual_max_mV(sensed), 10.0)
     assert report.voltage_residual_verdict == "PASS"
     assert report.false_negative is True
-    assert report.final_verdict == "FAIL_AMBIGUOUS_SIGNATURE"
+    assert report.final_verdict == "FAIL_MISSED_FAULT"
 
 
 def test_module_delta_voltage_defaults_to_zero_without_module_df():
@@ -147,3 +148,39 @@ def test_combined_fault_is_detected():
     assert report.capacity_verdict == "FAIL"
     assert report.contact_R_verdict == "FAIL"
     assert report.final_verdict == "PASS_DETECTED"
+
+
+def test_fault_with_no_rule_flags_is_missed_fault():
+    false_positive, false_negative, final_verdict = combine_final_verdict(
+        fault_label="voltage_sensor_bias",
+        rule_verdict_by_name={
+            "coulomb_drift_verdict": "PASS",
+            "ocv_reset_verdict": "PASS",
+            "voltage_residual_verdict": "PASS",
+            "capacity_verdict": "PASS",
+            "contact_R_verdict": "PASS",
+            "module_imbalance_verdict": "PASS",
+        },
+    )
+
+    assert false_positive is False
+    assert false_negative is True
+    assert final_verdict == "FAIL_MISSED_FAULT"
+
+
+def test_wrong_rule_flag_yields_ambiguous_signature():
+    false_positive, false_negative, final_verdict = combine_final_verdict(
+        fault_label="voltage_sensor_bias",
+        rule_verdict_by_name={
+            "coulomb_drift_verdict": "PASS",
+            "ocv_reset_verdict": "PASS",
+            "voltage_residual_verdict": "PASS",
+            "capacity_verdict": "FAIL",
+            "contact_R_verdict": "PASS",
+            "module_imbalance_verdict": "PASS",
+        },
+    )
+
+    assert false_positive is False
+    assert false_negative is False
+    assert final_verdict == "FAIL_AMBIGUOUS_SIGNATURE"
