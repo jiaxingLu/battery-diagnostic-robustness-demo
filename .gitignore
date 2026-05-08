@@ -12,3 +12,13 @@ build/
 
 # Debug visualization outputs
 reports/debug/
+
+# Per-metric debug plots regenerated on each pipeline run.
+# Only summary plots (rule_verdict_matrix.png, diagnostic_verdict_counts.png)
+# are tracked.
+reports/plots/capacity_consistency_error.png
+reports/plots/contact_R_inferred_ratio.png
+reports/plots/module_delta_voltage_max_mV.png
+reports/plots/soc_error_coulomb_max.png
+reports/plots/soc_error_ocv_reset_max.png
+reports/plots/voltage_residual_max_mV.png
